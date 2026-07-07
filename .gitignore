@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Env / editors
+.venv/
+.env
+.DS_Store
+.vscode/
+.idea/
+
+# Data & outputs (never commit large microscopy files or results)
+*.czi
+*.tif
+*.tiff
+*.ome.tif
+*_fields/
+*_panels/
+demo_output/
+batch_config.csv

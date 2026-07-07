@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "confocal-toolkit"
+version = "0.1.0"
+description = "Interactive + batch tools for extracting figure panels and ROIs from confocal / slide-scanner microscopy (.czi)."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.20",
+    "tifffile>=2023.7.10",
+    "imagecodecs>=2023.7.10",
+    "Pillow>=9",
+    "magicgui>=0.7",
+    "bioio>=1.1",
+    "bioio-czi",
+    # napari + a Qt backend are installed via conda (environment.yml) for
+    # reliable binaries on Intel / older macOS. Listed here for pip installs too.
+    "napari>=0.4.19",
+]
+
+[project.scripts]
+retina-fields = "confocal_toolkit.retina_field_extractor:main"
+
+[tool.setuptools]
+packages = ["confocal_toolkit"]

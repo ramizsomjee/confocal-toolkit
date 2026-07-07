@@ -1,0 +1,27 @@
+# Reproducible environment for confocal-toolkit.
+# Heavy binaries (napari, Qt, scipy, scikit-image, imagecodecs) come from
+# conda-forge, which builds for older macOS deployment targets and both Intel
+# (osx-64) and Apple Silicon (osx-arm64) -- so this works on an Intel Mac too.
+# bioio (+ the .czi reader) and the toolkit itself are installed via pip.
+#
+# Create:   conda env create -f environment.yml
+# Update:   conda env update -f environment.yml --prune
+name: confocal-toolkit
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - napari
+  - pyqt            # PyQt5 Qt backend (conda-forge build, Intel-friendly)
+  - numpy
+  - scipy
+  - scikit-image
+  - tifffile
+  - imagecodecs
+  - pillow
+  - magicgui
+  - pip
+  - pip:
+      - bioio>=1.1
+      - bioio-czi
+      - -e .         # install this toolkit in editable mode -> `git pull` = updated
