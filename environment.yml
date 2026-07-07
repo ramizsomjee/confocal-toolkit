@@ -12,6 +12,8 @@
 name: confocal-toolkit
 channels:
   - conda-forge
+  - nodefaults      # ignore the Anaconda "defaults" channel entirely (avoids
+                    # mixing incompatible libs on miniconda installs)
 dependencies:
   - python=3.11
   - napari
@@ -26,6 +28,14 @@ dependencies:
   - bioio           # conda-forge (pure python)
   - pylibczirw      # conda-forge prebuilt .czi reader (else pip tries to compile it)
   - aicspylibczi    # conda-forge prebuilt (also pulled in by bioio-czi)
+  # Runtime libs the pylibczirw .so links via @rpath but conda-forge doesn't
+  # auto-pull. Without these you get "Library not loaded: @rpath/libpsl.5.dylib"
+  # (or libssh2/openssl) at import time. This is the full libcurl chain.
+  - libcurl
+  - libpsl
+  - libssh2
+  - openssl
+  - libcxx
   - pip
   - pip:
       - bioio-czi    # not on conda-forge; its compiled deps above are already satisfied
