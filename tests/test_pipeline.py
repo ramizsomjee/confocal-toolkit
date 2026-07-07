@@ -134,10 +134,13 @@ def test_csv_generate_and_read():
     files = R.gather_inputs(folder)
     with tempfile.TemporaryDirectory() as td:
         csv_path = os.path.join(td, "config.csv")
-        R.write_config_csv(files, csv_path)
+        R.write_config_csv(files, csv_path, box_um=150.0)
         rows = R.read_config_csv(csv_path)
         assert rows, "no rows written"
         assert set(R.CSV_FIELDS).issubset(rows[0].keys())
+        # box size is a per-row column and honors the requested default
+        assert "box_um" in rows[0]
+        assert all(float(r["box_um"]) == 150.0 for r in rows), "box_um not written"
         # multi-scene files must produce multiple rows (SD7 ...Corbo have 3)
         from collections import Counter
         per_file = Counter(r["file"] for r in rows)
@@ -147,6 +150,17 @@ def test_csv_generate_and_read():
         assert all(r["colormap"] and r["base"] for r in rows)
         print(f"[ok] CSV generate/read: {len(rows)} rows from {len(files)} files, "
               f"{len(multi)} multi-scene expanded")
+
+
+def test_box_um_configurable():
+    stack = np.zeros((1, 100, 100), np.uint16)
+    names, cm, clim = ["M"], ["green"], [(0.0, 1.0)]
+    p100 = R.FieldPicker(stack, 0.5, names, 100.0, clim, cm)   # 0.5 um/px
+    p150 = R.FieldPicker(stack, 0.5, names, 150.0, clim, cm)
+    assert p100.box_px == 200.0 and p150.box_px == 300.0
+    # CSV cell -> value with fallback (used to make box_um a per-row override)
+    assert R._num("150", 100.0) == 150.0 and R._num("", 100.0) == 100.0
+    print("[ok] box size configurable (box_um -> box_px; CSV/_num fallback)")
 
 
 def test_pyramid_levels():
@@ -177,6 +191,7 @@ if __name__ == "__main__":
     test_tiled_rgb_matches()
     test_fullres_rgb_export()
     test_row_clim_parsing()
+    test_box_um_configurable()
     test_csv_generate_and_read()
     test_pyramid_levels()
     test_naming_single_vs_multi()

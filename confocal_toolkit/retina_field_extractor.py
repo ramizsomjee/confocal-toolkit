@@ -427,20 +427,22 @@ def process_scene(path, scene, args, outroot, base_override=None, csv_row=None):
                  if c.strip()] or guess_colormaps(names, n_ch)
         gamma = _num(csv_row.get("gamma"), args.gamma)
         rotate = _num(csv_row.get("rotate"), args.rotate)
+        box_um = _num(csv_row.get("box_um"), args.box_um)
     else:
         clim_over = args.clim
         cmaps = args.colormaps or guess_colormaps(names, n_ch)
         gamma = args.gamma
         rotate = args.rotate
+        box_um = args.box_um
 
     climits = compute_climits(stack, args.pmin, args.pmax, clim_over)
 
     print(f"\nLoaded {stem}  scene {scene+1}/{n_scenes} ({scene_name})")
     print(f"  shape {stack.shape}  {um_per_px:.4f} um/px  channels {names}")
-    print(f"  colormaps {cmaps}  gamma {gamma}  "
+    print(f"  box {box_um} um  colormaps {cmaps}  gamma {gamma}  "
           f"clim {[tuple(round(x, 1) for x in c) for c in climits]}")
 
-    picker = FieldPicker(stack, um_per_px, names, args.box_um, climits, cmaps,
+    picker = FieldPicker(stack, um_per_px, names, box_um, climits, cmaps,
                          gamma=gamma, init_angle=rotate)
     picker.run()
     if picker.box_centers is None:
@@ -480,7 +482,7 @@ def _num(val, default):
 # CSV batch configuration
 # --------------------------------------------------------------------------- #
 CSV_FIELDS = ["file", "scene", "n_scenes", "base", "channels", "colormap",
-              "clim_lo", "clim_hi", "gamma", "rotate", "skip"]
+              "clim_lo", "clim_hi", "gamma", "box_um", "rotate", "skip"]
 
 # When the channel name is uninformative (e.g. every file is "AF647"), guess a
 # per-opsin colormap from the file name instead. Editable in the CSV.
@@ -517,7 +519,7 @@ def scene_channel_info(path):
     return out, len(scenes)
 
 
-def write_config_csv(files, out_csv):
+def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
     """Generate a per-(file, scene) template CSV: one row per extracted scene,
     with a guessed colormap and blank contrast (blank = auto percentile)."""
     import csv
@@ -535,7 +537,8 @@ def write_config_csv(files, out_csv):
             rows.append({
                 "file": str(f), "scene": i, "n_scenes": n, "base": base,
                 "channels": ";".join(names), "colormap": ";".join(cmaps),
-                "clim_lo": "", "clim_hi": "", "gamma": 1.0, "rotate": 0, "skip": 0,
+                "clim_lo": "", "clim_hi": "", "gamma": 1.0, "box_um": box_um,
+                "rotate": 0, "skip": 0,
             })
     with open(out_csv, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
@@ -625,7 +628,7 @@ def main(argv=None):
         if not files:
             print(f"error: no .czi found at {args.input}", file=sys.stderr)
             return 2
-        write_config_csv(files, args.make_csv)
+        write_config_csv(files, args.make_csv, box_um=args.box_um)
         return 0
 
     # Mode 2: run from a batch-config CSV (per-row color/brightness).

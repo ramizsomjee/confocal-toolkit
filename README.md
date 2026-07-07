@@ -160,8 +160,14 @@ These are set on the command line (they apply to the whole run):
 | `--clim "lo,hi"` | Exact brightness limits, in raw intensity units | `--clim "120,4000"` |
 | `--gamma` | Brighten/darken midtones (`<1` brightens) | `--gamma 0.8` |
 | `--colormaps` | Channel color (guessed from the file name otherwise) | `--colormaps green` |
+| `--box-um` | Field box side length in **microns** (default 100) | `--box-um 150` |
 | `--downsample` | Scale for the downsampled outputs (default 0.1 = 10%) | `--downsample 0.15` |
 | `--fullres-rgb` | Also save the colored whole retina at **full** resolution | `--fullres-rgb` |
+
+Box size is a true physical size — the tool converts microns to pixels using each
+file's own pixel size, so `--box-um 150` gives 150 × 150 µm regardless of
+magnification. In the batch CSV it's the per-file **`box_um`** column, so
+different images can use different box sizes.
 
 Example:
 ```bash
@@ -192,6 +198,7 @@ This makes a spreadsheet you can open in Excel/Numbers. Columns:
 | `colormap` | color per channel (e.g. `green`); guessed from the file name |
 | `clim_lo` / `clim_hi` | brightness limits; **leave blank = auto** |
 | `gamma` | midtone adjust (default 1.0) |
+| `box_um` | field box size in microns for this image (default 100) |
 | `rotate` | starting angle (you can still change it in the window) |
 | `skip` | put `1` to skip that row |
 
