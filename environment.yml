@@ -1,8 +1,11 @@
 # Reproducible environment for confocal-toolkit.
-# Heavy binaries (napari, Qt, scipy, scikit-image, imagecodecs) come from
-# conda-forge, which builds for older macOS deployment targets and both Intel
-# (osx-64) and Apple Silicon (osx-arm64) -- so this works on an Intel Mac too.
-# bioio (+ the .czi reader) and the toolkit itself are installed via pip.
+# ALL compiled binaries come from conda-forge, which ships prebuilt packages for
+# both Intel (osx-64) and Apple Silicon (osx-arm64) that target older macOS.
+# This is deliberate: the .czi readers (pylibczirw / aicspylibczi) are C++
+# extensions with no source-friendly build, so letting pip compile them fails on
+# Intel / older macOS ("Failed building wheel for pylibczirw"). Installing them
+# from conda-forge avoids that entirely. Only pure-python bioio-czi (not on
+# conda-forge) and this toolkit come from pip.
 #
 # Create:   conda env create -f environment.yml
 # Update:   conda env update -f environment.yml --prune
@@ -20,8 +23,10 @@ dependencies:
   - imagecodecs
   - pillow
   - magicgui
+  - bioio           # conda-forge (pure python)
+  - pylibczirw      # conda-forge prebuilt .czi reader (else pip tries to compile it)
+  - aicspylibczi    # conda-forge prebuilt (also pulled in by bioio-czi)
   - pip
   - pip:
-      - bioio>=1.1
-      - bioio-czi
+      - bioio-czi    # not on conda-forge; its compiled deps above are already satisfied
       - -e .         # install this toolkit in editable mode -> `git pull` = updated
