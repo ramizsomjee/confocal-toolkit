@@ -1,12 +1,9 @@
-"""Parse animal/slide metadata from messy slide file names.
+"""Parse animal/slide metadata from messy slide file names (rule-based).
 
 Fields: degeneration model, Samd7 genotype (KO/WT), eye (left/right), stain,
-age (p##), and an optional animal/replicate id.
-
-Strategy: a rule-based parser always works offline. If an ANTHROPIC_API_KEY is
-set *and* the `anthropic` package is installed, an AI pass is tried first (better
-on unusual names) and falls back to the rules on any failure. The result is then
-shown in an interactive confirm/edit prompt (unless suppressed).
+age (p##), and an optional animal/replicate id. The parsed values are shown in
+an interactive confirm/edit prompt (unless suppressed) so odd names are easy to
+fix by hand.
 
 Eye convention (per the lab): S-opsin is imaged in the LEFT eye, M-opsin in the
 RIGHT eye.
@@ -17,7 +14,6 @@ Default age when the name has no p## token, keyed on degeneration model:
 
 from __future__ import annotations
 
-import os
 import re
 
 FIELDS = ["model", "samd7", "eye", "stain", "age", "animal_id"]
@@ -90,46 +86,8 @@ def parse_rules(name: str) -> dict:
     return meta
 
 
-def parse_ai(name: str) -> dict | None:
-    """Try to parse with the Anthropic API. Returns None if unavailable/failed."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
-    try:
-        import anthropic
-        import json
-        client = anthropic.Anthropic()
-        prompt = (
-            "Extract retina-imaging metadata from this microscopy slide filename. "
-            "Return ONLY compact JSON with keys: model (one of RD10, P23H, RhoKO, "
-            "or \"\"), samd7 (KO, WT, or \"\"), stain (S-opsin, M-opsin, or \"\"), "
-            "eye (left, right, or \"\"), age (like p30 or \"\"), animal_id (or \"\"). "
-            "Eye convention: S-opsin=left, M-opsin=right. "
-            f"Filename: {name!r}"
-        )
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001", max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        text = text[text.find("{"): text.rfind("}") + 1]
-        data = json.loads(text)
-        data.setdefault("slide", name)
-        if not data.get("eye"):
-            data["eye"] = eye_for_stain(data.get("stain", ""))
-        if not data.get("age"):
-            data["age"] = default_age_for_model(data.get("model", ""))
-        return {k: str(data.get(k, "")) for k in FIELDS} | {"slide": name}
-    except Exception as e:
-        print(f"  (AI metadata parse failed, using rules: {e})")
-        return None
-
-
-def parse_metadata(name: str, use_ai: bool = True) -> dict:
-    """AI-assisted if available, else rule-based."""
-    if use_ai:
-        ai = parse_ai(name)
-        if ai:
-            return ai
+def parse_metadata(name: str) -> dict:
+    """Rule-based metadata from a slide file name."""
     return parse_rules(name)
 
 

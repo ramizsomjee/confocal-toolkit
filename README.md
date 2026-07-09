@@ -142,9 +142,8 @@ The tool reads each slide name and fills in: degeneration **model** (RD10 / P23H
 / RhoKO), **Samd7** genotype (KO/WT), **eye** (S-opsin → left, M-opsin → right),
 **stain**, and **age**. Missing age defaults by model (P23H→p30, RD10→p60,
 RhoKO→p90) or pass `--age p60`. You confirm/edit each field at a prompt; skip it
-with `--no-confirm`. Set an `ANTHROPIC_API_KEY` and `pip install anthropic` to
-parse names with Claude (rules fallback); otherwise it's rules-only. The
-confirmed fields form a standardized name like `RD10_Samd7-KO_L_S-opsin_p60`.
+with `--no-confirm`. The confirmed fields form a standardized name like
+`RD10_Samd7-KO_L_S-opsin_p60`.
 
 ### The per-eye PDF figure (editable)
 Closing the window also writes `<name>_figure.pdf`, laid out by eye —

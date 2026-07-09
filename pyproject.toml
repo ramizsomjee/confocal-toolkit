@@ -23,9 +23,6 @@ dependencies = [
     "napari>=0.4.19",
 ]
 
-[project.optional-dependencies]
-ai = ["anthropic>=0.40"]   # optional: AI-assisted metadata parsing from slide names
-
 [project.scripts]
 retina-fields = "confocal_toolkit.retina_field_extractor:main"
 

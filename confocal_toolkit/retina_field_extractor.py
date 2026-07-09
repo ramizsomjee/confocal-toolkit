@@ -434,7 +434,7 @@ def _overlay_umpp(params):
     return (um / dsf) if (um and dsf) else None
 
 
-def build_figures_from_dir(directory, use_ai=True, interactive=True):
+def build_figures_from_dir(directory, interactive=True):
     """Rebuild editable PDF figures from a folder of already-exported panels.
 
     Uses `<base>_params.json` when present (full metadata + scale). Otherwise
@@ -476,7 +476,7 @@ def build_figures_from_dir(directory, use_ai=True, interactive=True):
                       if (odir / f"{base}_{f}_rgb.tif").exists() else None)
                   for f in FIELD_NAMES}
         overlay = tifffile.imread(str(ov))
-        meta = MD.confirm_metadata(MD.parse_metadata(base, use_ai=use_ai),
+        meta = MD.confirm_metadata(MD.parse_metadata(base),
                                    interactive=interactive)
         std = MD.standardized_name(meta)
         pdf = odir / f"{std}_figure.pdf"
@@ -523,8 +523,8 @@ def process_scene(path, scene, args, outroot, base_override=None, csv_row=None):
     print(f"  box {box_um} um  colormaps {cmaps}  gamma {gamma}  "
           f"clim {[tuple(round(x, 1) for x in c) for c in climits]}")
 
-    # Metadata: from CSV columns if present, else parse (AI-assisted if a key is
-    # set, else rules) and confirm/edit in the terminal.
+    # Metadata: from CSV columns if present, else parsed from the name and
+    # confirmed/edited in the terminal.
     meta = _metadata_for(stem, args, csv_row)
 
     picker = FieldPicker(stack, um_per_px, names, box_um, climits, cmaps,
@@ -553,7 +553,7 @@ def _metadata_for(stem, args, csv_row):
                        or MD.default_age_for_model(meta.get("model", "")))
         prompt = args.confirm
     else:
-        meta = MD.parse_metadata(stem, use_ai=not args.no_ai)
+        meta = MD.parse_metadata(stem)
         if args.age and not meta.get("age"):
             meta["age"] = args.age
         prompt = not args.no_confirm
@@ -629,7 +629,7 @@ def scene_channel_info(path):
     return out, len(scenes)
 
 
-def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM, use_ai=True):
+def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
     """Generate a per-(file, scene) template CSV: one row per extracted scene,
     with a guessed colormap, blank contrast (blank = auto), and parsed metadata."""
     import csv
@@ -641,7 +641,7 @@ def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM, use_ai=True):
             print(f"  skip {f}: {e}", file=sys.stderr)
             continue
         stem = Path(f).stem
-        meta = MD.parse_metadata(stem, use_ai=use_ai)   # prefill metadata columns
+        meta = MD.parse_metadata(stem)   # prefill metadata columns
         for i, sc, names in info:
             base = f"{stem}_s{i}" if n > 1 else stem
             cmaps = guess_colormaps_for_file(stem, names)
@@ -731,8 +731,6 @@ def parse_args(argv=None):
                    help="Don't prompt to confirm/edit parsed metadata (direct runs).")
     p.add_argument("--confirm", action="store_true",
                    help="Do prompt to confirm/edit metadata even in --csv runs.")
-    p.add_argument("--no-ai", action="store_true",
-                   help="Never use the Anthropic API for metadata parsing.")
     return p.parse_args(argv)
 
 
@@ -749,7 +747,7 @@ def main(argv=None):
 
     # Mode 0: build figures from a premade folder of exported panels and exit.
     if args.build_figure:
-        build_figures_from_dir(args.build_figure, use_ai=not args.no_ai,
+        build_figures_from_dir(args.build_figure,
                                interactive=not args.no_confirm)
         return 0
 
@@ -762,8 +760,7 @@ def main(argv=None):
         if not files:
             print(f"error: no .czi found at {args.input}", file=sys.stderr)
             return 2
-        write_config_csv(files, args.make_csv, box_um=args.box_um,
-                          use_ai=not args.no_ai)
+        write_config_csv(files, args.make_csv, box_um=args.box_um)
         return 0
 
     # Mode 2: run from a batch-config CSV (per-row color/brightness).
