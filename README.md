@@ -119,6 +119,8 @@ Enter.
 A napari window opens. Here's the workflow:
 
 ### The interactive window, step by step
+0. **Confirm metadata** — before the window opens, the tool parses the slide
+   name and asks you to confirm/edit the fields (see [Metadata & naming](#metadata--naming)).
 1. **Set the brightness** (optional) — done on the command line, see
    [Brightness & color](#brightness--color). By default it auto-scales.
 2. **Rotate dorsal-up** — on the left there's a **Rotate (deg)** slider. Drag it
@@ -134,6 +136,31 @@ A napari window opens. Here's the workflow:
 > Whatever positions the boxes are in at the moment you close are what gets
 > cropped. If you rotate *after* placing boxes, the boxes won't follow the
 > tissue — so rotate first.
+
+### Metadata & naming
+The tool reads each slide name and fills in: degeneration **model** (RD10 / P23H
+/ RhoKO), **Samd7** genotype (KO/WT), **eye** (S-opsin → left, M-opsin → right),
+**stain**, and **age**. Missing age defaults by model (P23H→p30, RD10→p60,
+RhoKO→p90) or pass `--age p60`. You confirm/edit each field at a prompt; skip it
+with `--no-confirm`. Set an `ANTHROPIC_API_KEY` and `pip install anthropic` to
+parse names with Claude (rules fallback); otherwise it's rules-only. The
+confirmed fields form a standardized name like `RD10_Samd7-KO_L_S-opsin_p60`.
+
+### The per-eye PDF figure (editable)
+Closing the window also writes `<name>_figure.pdf`, laid out by eye —
+**left (S-opsin):** panels on the left, low-mag overlay, compass (T↔N);
+**right (M-opsin):** the mirror (compass N↔T, overlay, panels on the right). It
+embeds the six D/V crops at **full resolution** for figure-making, adds scale
+bars, and stays **editable in Illustrator** (vector text, `pdf.fonttype 42`). The
+retina pixels are never flipped — only the layout and nasal/temporal labels
+mirror between eyes. Use `--no-figure` to skip.
+
+### Rebuild figures from an existing folder of panels
+```bash
+retina-fields --build-figure "/path/to/<something>_fields/"
+```
+Rebuilds the PDFs from already-exported panels (reads each `*_params.json`, or
+falls back to any `*_fields_overlay.tif` it finds and prompts for metadata).
 
 ### Files with multiple scenes
 Some `.czi` contain several scenes (e.g. multiple retinas on one slide). The tool
@@ -199,6 +226,7 @@ This makes a spreadsheet you can open in Excel/Numbers. Columns:
 | `clim_lo` / `clim_hi` | brightness limits; **leave blank = auto** |
 | `gamma` | midtone adjust (default 1.0) |
 | `box_um` | field box size in microns for this image (default 100) |
+| `model`, `samd7`, `eye`, `stain`, `age`, `animal_id` | metadata (pre-filled from the name; edit as needed) — this is your **images metadata spreadsheet** |
 | `rotate` | starting angle (you can still change it in the window) |
 | `skip` | put `1` to skip that row |
 
@@ -228,7 +256,8 @@ For each image, a folder is created next to your data at
 | `<base>_fields_overlay.tif` | Colored whole retina with the 6 labeled boxes drawn on |
 | `<base>_D1.tif` … `_V3.tif` | The six 100 µm field crops (raw, for quantification) |
 | `<base>_D1_rgb.tif` … `_V3_rgb.tif` | The six crops as colored images (for figures) |
-| `<base>_params.json` | The rotation angle, box positions, and contrast used (for your records) |
+| `<std-name>_figure.pdf` | **Editable per-eye figure** (panels + overlay + compass + metadata) |
+| `<base>_params.json` | Rotation, box positions, contrast, and metadata (for your records / figure rebuilds) |
 
 ---
 

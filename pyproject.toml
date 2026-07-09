@@ -15,12 +15,16 @@ dependencies = [
     "imagecodecs>=2023.7.10",
     "Pillow>=9",
     "magicgui>=0.7",
+    "matplotlib>=3.6",
     "bioio>=1.1",
     "bioio-czi",
     # napari + a Qt backend are installed via conda (environment.yml) for
     # reliable binaries on Intel / older macOS. Listed here for pip installs too.
     "napari>=0.4.19",
 ]
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.40"]   # optional: AI-assisted metadata parsing from slide names
 
 [project.scripts]
 retina-fields = "confocal_toolkit.retina_field_extractor:main"

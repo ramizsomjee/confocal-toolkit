@@ -49,9 +49,11 @@ import numpy as np
 
 # Works both as an installed package module and when run as a loose script.
 try:
-    from . import geometry as G
+    from . import geometry as G, metadata as MD, figure as FIG
 except ImportError:
     import geometry as G
+    import metadata as MD
+    import figure as FIG
 
 FIELD_NAMES = ["D1", "D2", "D3", "V1", "V2", "V3"]
 DEFAULT_BOX_UM = 100.0
@@ -338,10 +340,12 @@ def burn_in_overlay(rgb, boxes_px, factor, out_path):
         d.rectangle([x0, y0, x1, y1], outline=color, width=max(2, int(3)))
         d.text((x0 + 3, y0 + 3), name, fill=color)
     im.save(str(out_path))
+    return np.asarray(im)
 
 
 def export(picker: FieldPicker, base: str, outdir: Path, downsample: float,
-           fullres_rgb: bool = False):
+           fullres_rgb: bool = False, meta: dict | None = None,
+           make_figure: bool = True):
     import tifffile
     outdir.mkdir(parents=True, exist_ok=True)
     stack = picker.stack
@@ -373,8 +377,8 @@ def export(picker: FieldPicker, base: str, outdir: Path, downsample: float,
     ds_rgb = additive_rgb(ds, clim, cmaps, gamma)
     tifffile.imwrite(str(outdir / f"{base}_whole_rgb.tif"), ds_rgb,
                      photometric="rgb", compression="zlib")   # clean, no burn-in
-    burn_in_overlay(ds_rgb, boxes_px, ds_factor,
-                    outdir / f"{base}_fields_overlay.tif")     # boxes burned in
+    overlay_rgb = burn_in_overlay(ds_rgb, boxes_px, ds_factor,
+                                  outdir / f"{base}_fields_overlay.tif")
 
     # 4b. optional full-resolution colored whole retina (no boxes), tiled so it
     # doesn't blow memory on 20k+ px images.
@@ -384,29 +388,106 @@ def export(picker: FieldPicker, base: str, outdir: Path, downsample: float,
                          photometric="rgb", tile=(1024, 1024), compression="zlib")
         print(f"  wrote full-res colored RGB {full_rgb.shape}")
 
-    # 5. per-field crops: raw composite + colorized RGB
+    # 5. per-field crops: raw composite + colorized RGB (kept for the figure)
+    panel_rgbs = {}
     for name, (y0, y1, x0, x1) in boxes_px.items():
         crop = oriented[:, y0:y1, x0:x1]
         save_composite(outdir / f"{base}_{name}.tif", crop, names)
         rgb = additive_rgb(crop, clim, cmaps, gamma)
+        panel_rgbs[name] = rgb
         tifffile.imwrite(str(outdir / f"{base}_{name}_rgb.tif"), rgb,
                          photometric="rgb", compression="zlib")
         print(f"  {name}: crop [{y0}:{y1}, {x0}:{x1}]")
 
-    # 6. reproducibility sidecar
+    # 6. reproducibility sidecar (includes metadata for figure rebuilds)
+    std_name = MD.standardized_name(meta) if meta else base
     params = {
-        "base": base, "rotation_deg": angle,
+        "base": base, "std_name": std_name, "rotation_deg": angle,
         "um_per_px": picker.um_per_px, "box_um": picker.box_um,
-        "box_px": picker.box_px, "downsample": downsample, "gamma": gamma,
+        "box_px": picker.box_px, "downsample": downsample,
+        "ds_factor": ds_factor, "gamma": gamma,
         "channels": names, "colormaps": cmaps,
         "contrast_limits": {names[i]: list(clim[i]) for i in range(len(clim))},
         "field_centers_world": {n: list(c) for n, c in
                                 zip(FIELD_NAMES, picker.box_centers)},
         "field_bounds_oriented_px": {n: list(b) for n, b in boxes_px.items()},
         "oriented_shape": list(oriented.shape),
+        "metadata": meta or {},
     }
     (outdir / f"{base}_params.json").write_text(json.dumps(params, indent=2))
     print(f"  wrote outputs to {outdir}/")
+
+    # 7. editable per-eye PDF figure
+    if make_figure and meta:
+        overlay_um_per_px = picker.um_per_px / ds_factor if ds_factor else None
+        pdf = outdir / f"{std_name}_figure.pdf"
+        FIG.build_eye_figure(panel_rgbs, overlay_rgb, meta, pdf,
+                             box_um=picker.box_um,
+                             overlay_um_per_px=overlay_um_per_px,
+                             std_name=std_name)
+        print(f"  wrote figure {pdf.name}")
+
+
+def _overlay_umpp(params):
+    um = params.get("um_per_px")
+    dsf = params.get("ds_factor")
+    return (um / dsf) if (um and dsf) else None
+
+
+def build_figures_from_dir(directory, use_ai=True, interactive=True):
+    """Rebuild editable PDF figures from a folder of already-exported panels.
+
+    Uses `<base>_params.json` when present (full metadata + scale). Otherwise
+    falls back to any `<base>_fields_overlay.tif` it finds, parsing metadata from
+    the name and prompting to confirm.
+    """
+    import tifffile
+    d = Path(directory)
+    made = 0
+    param_files = sorted(d.rglob("*_params.json"))
+    if param_files:
+        for pf in param_files:
+            params = json.loads(pf.read_text())
+            base = params.get("base", pf.name.replace("_params.json", ""))
+            std = params.get("std_name", base)
+            meta = params.get("metadata") or {}
+            odir = pf.parent
+            panels = {f: (tifffile.imread(str(odir / f"{base}_{f}_rgb.tif"))
+                          if (odir / f"{base}_{f}_rgb.tif").exists() else None)
+                      for f in FIELD_NAMES}
+            ov = odir / f"{base}_fields_overlay.tif"
+            overlay = tifffile.imread(str(ov)) if ov.exists() else None
+            pdf = odir / f"{std}_figure.pdf"
+            FIG.build_eye_figure(panels, overlay, meta, pdf,
+                                 box_um=params.get("box_um", 100.0),
+                                 overlay_um_per_px=_overlay_umpp(params),
+                                 std_name=std)
+            print(f"  built {pdf}")
+            made += 1
+        print(f"\nBuilt {made} figure(s) from params sidecars in {d}/")
+        return
+
+    # Fallback: no params.json -> infer from overlay files, prompt metadata.
+    overlays = sorted(d.rglob("*_fields_overlay.tif"))
+    for ov in overlays:
+        base = ov.name.replace("_fields_overlay.tif", "")
+        odir = ov.parent
+        panels = {f: (tifffile.imread(str(odir / f"{base}_{f}_rgb.tif"))
+                      if (odir / f"{base}_{f}_rgb.tif").exists() else None)
+                  for f in FIELD_NAMES}
+        overlay = tifffile.imread(str(ov))
+        meta = MD.confirm_metadata(MD.parse_metadata(base, use_ai=use_ai),
+                                   interactive=interactive)
+        std = MD.standardized_name(meta)
+        pdf = odir / f"{std}_figure.pdf"
+        FIG.build_eye_figure(panels, overlay, meta, pdf, std_name=std)
+        print(f"  built {pdf}")
+        made += 1
+    if not made:
+        print(f"No panels found in {d} (need *_params.json or *_fields_overlay.tif).",
+              file=sys.stderr)
+    else:
+        print(f"\nBuilt {made} figure(s) from {d}/")
 
 
 # --------------------------------------------------------------------------- #
@@ -442,6 +523,10 @@ def process_scene(path, scene, args, outroot, base_override=None, csv_row=None):
     print(f"  box {box_um} um  colormaps {cmaps}  gamma {gamma}  "
           f"clim {[tuple(round(x, 1) for x in c) for c in climits]}")
 
+    # Metadata: from CSV columns if present, else parse (AI-assisted if a key is
+    # set, else rules) and confirm/edit in the terminal.
+    meta = _metadata_for(stem, args, csv_row)
+
     picker = FieldPicker(stack, um_per_px, names, box_um, climits, cmaps,
                          gamma=gamma, init_angle=rotate)
     picker.run()
@@ -449,7 +534,30 @@ def process_scene(path, scene, args, outroot, base_override=None, csv_row=None):
         print("  (window closed without capture; skipping)")
         return
     export(picker, base, outroot / stem, args.downsample,
-           fullres_rgb=getattr(args, "fullres_rgb", False))
+           fullres_rgb=getattr(args, "fullres_rgb", False),
+           meta=meta, make_figure=not args.no_figure)
+
+
+def _metadata_for(stem, args, csv_row):
+    """Build the metadata dict, honoring CSV columns / --age / confirm flags.
+
+    CSV rows carry metadata already, so no prompt unless --confirm. Direct runs
+    parse the name and prompt to confirm/edit unless --no-confirm.
+    """
+    from_csv = csv_row is not None and any(csv_row.get(k) for k in MD.FIELDS)
+    if from_csv:
+        meta = {k: (csv_row.get(k) or "") for k in MD.FIELDS}
+        meta["slide"] = stem
+        meta["eye"] = meta.get("eye") or MD.eye_for_stain(meta.get("stain", ""))
+        meta["age"] = (meta.get("age") or args.age
+                       or MD.default_age_for_model(meta.get("model", "")))
+        prompt = args.confirm
+    else:
+        meta = MD.parse_metadata(stem, use_ai=not args.no_ai)
+        if args.age and not meta.get("age"):
+            meta["age"] = args.age
+        prompt = not args.no_confirm
+    return MD.confirm_metadata(meta, interactive=prompt)
 
 
 def gather_inputs(inp):
@@ -482,7 +590,9 @@ def _num(val, default):
 # CSV batch configuration
 # --------------------------------------------------------------------------- #
 CSV_FIELDS = ["file", "scene", "n_scenes", "base", "channels", "colormap",
-              "clim_lo", "clim_hi", "gamma", "box_um", "rotate", "skip"]
+              "clim_lo", "clim_hi", "gamma", "box_um", "rotate", "skip",
+              # metadata columns (the "images metadata spreadsheet")
+              "model", "samd7", "eye", "stain", "age", "animal_id"]
 
 # When the channel name is uninformative (e.g. every file is "AF647"), guess a
 # per-opsin colormap from the file name instead. Editable in the CSV.
@@ -519,9 +629,9 @@ def scene_channel_info(path):
     return out, len(scenes)
 
 
-def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
+def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM, use_ai=True):
     """Generate a per-(file, scene) template CSV: one row per extracted scene,
-    with a guessed colormap and blank contrast (blank = auto percentile)."""
+    with a guessed colormap, blank contrast (blank = auto), and parsed metadata."""
     import csv
     rows = []
     for f in files:
@@ -531,6 +641,7 @@ def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
             print(f"  skip {f}: {e}", file=sys.stderr)
             continue
         stem = Path(f).stem
+        meta = MD.parse_metadata(stem, use_ai=use_ai)   # prefill metadata columns
         for i, sc, names in info:
             base = f"{stem}_s{i}" if n > 1 else stem
             cmaps = guess_colormaps_for_file(stem, names)
@@ -539,6 +650,9 @@ def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
                 "channels": ";".join(names), "colormap": ";".join(cmaps),
                 "clim_lo": "", "clim_hi": "", "gamma": 1.0, "box_um": box_um,
                 "rotate": 0, "skip": 0,
+                "model": meta.get("model", ""), "samd7": meta.get("samd7", ""),
+                "eye": meta.get("eye", ""), "stain": meta.get("stain", ""),
+                "age": meta.get("age", ""), "animal_id": meta.get("animal_id", ""),
             })
     with open(out_csv, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
@@ -605,6 +719,20 @@ def parse_args(argv=None):
                    help="Override physical pixel size (microns/pixel).")
     p.add_argument("--scene", type=int, default=None,
                    help="Process only this scene index (default: all scenes).")
+    # metadata / figure
+    p.add_argument("--build-figure", metavar="DIR", default=None,
+                   help="Build editable PDF figures from a folder of already-"
+                        "exported panels (uses *_params.json, else prompts), then exit.")
+    p.add_argument("--age", default=None,
+                   help="Default age (e.g. p60) when the name has none.")
+    p.add_argument("--no-figure", action="store_true",
+                   help="Don't build the per-eye PDF figure after extraction.")
+    p.add_argument("--no-confirm", action="store_true",
+                   help="Don't prompt to confirm/edit parsed metadata (direct runs).")
+    p.add_argument("--confirm", action="store_true",
+                   help="Do prompt to confirm/edit metadata even in --csv runs.")
+    p.add_argument("--no-ai", action="store_true",
+                   help="Never use the Anthropic API for metadata parsing.")
     return p.parse_args(argv)
 
 
@@ -619,6 +747,12 @@ def main(argv=None):
     args = parse_args(argv)
     args.clim = parse_clim(args.clim)
 
+    # Mode 0: build figures from a premade folder of exported panels and exit.
+    if args.build_figure:
+        build_figures_from_dir(args.build_figure, use_ai=not args.no_ai,
+                               interactive=not args.no_confirm)
+        return 0
+
     # Mode 1: generate a batch-config CSV from a folder and exit.
     if args.make_csv:
         if not args.input:
@@ -628,7 +762,8 @@ def main(argv=None):
         if not files:
             print(f"error: no .czi found at {args.input}", file=sys.stderr)
             return 2
-        write_config_csv(files, args.make_csv, box_um=args.box_um)
+        write_config_csv(files, args.make_csv, box_um=args.box_um,
+                          use_ai=not args.no_ai)
         return 0
 
     # Mode 2: run from a batch-config CSV (per-row color/brightness).

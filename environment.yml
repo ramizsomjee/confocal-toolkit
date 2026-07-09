@@ -25,6 +25,7 @@ dependencies:
   - imagecodecs
   - pillow
   - magicgui
+  - matplotlib-base # editable PDF figures (Agg/PDF backend only, no extra GUI toolkits)
   - bioio           # conda-forge (pure python)
   - pylibczirw      # conda-forge prebuilt .czi reader (else pip tries to compile it)
   - aicspylibczi    # conda-forge prebuilt (also pulled in by bioio-czi)

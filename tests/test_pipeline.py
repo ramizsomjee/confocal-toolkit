@@ -115,6 +115,29 @@ def test_full_export():
               f"D1 crop {d1.shape}, marker at {yx}, params captured")
 
 
+def test_export_figure_and_rebuild():
+    pk = _make_picker(box_um=100.0, um_per_px=0.5)
+    pk.angle = 0.0
+    pk.box_centers = [(150.0, 200.0)] + [(60.0, 100.0)] * 5
+    meta = {"model": "RD10", "samd7": "KO", "eye": "left", "stain": "S-opsin",
+            "age": "p60", "animal_id": "R1", "slide": "sampleA"}
+    with tempfile.TemporaryDirectory() as td:
+        R.export(pk, "sampleA", Path(td), downsample=0.25, meta=meta,
+                 make_figure=True)
+        std = R.MD.standardized_name(meta)
+        fig = os.path.join(td, f"{std}_figure.pdf")
+        assert os.path.exists(fig), f"figure not written: {sorted(os.listdir(td))}"
+        params = json.loads(Path(td, "sampleA_params.json").read_text())
+        assert params["metadata"]["model"] == "RD10"
+        assert params["std_name"] == std
+        # rebuild from the premade dir
+        os.remove(fig)
+        R.build_figures_from_dir(td)
+        assert os.path.exists(fig), "build_figures_from_dir did not rebuild the PDF"
+    print(f"[ok] export writes editable figure ({std}_figure.pdf) + metadata; "
+          "build_figures_from_dir rebuilds it")
+
+
 def test_row_clim_parsing():
     # blank -> all auto
     assert R.row_clim({"clim_lo": "", "clim_hi": ""}, 1) is None
@@ -148,8 +171,13 @@ def test_csv_generate_and_read():
         assert multi, "expected at least one multi-scene file to expand into rows"
         # each row has a colormap guess and a base name
         assert all(r["colormap"] and r["base"] for r in rows)
+        # metadata columns are present and prefilled (stain/eye derived)
+        for col in ("model", "samd7", "eye", "stain", "age"):
+            assert col in rows[0], col
+        assert any(r["stain"] for r in rows), "no stain parsed into CSV"
+        assert all((r["eye"] in ("left", "right", "")) for r in rows)
         print(f"[ok] CSV generate/read: {len(rows)} rows from {len(files)} files, "
-              f"{len(multi)} multi-scene expanded")
+              f"{len(multi)} multi-scene expanded, metadata columns filled")
 
 
 def test_box_um_configurable():
@@ -190,6 +218,7 @@ if __name__ == "__main__":
     test_full_export()
     test_tiled_rgb_matches()
     test_fullres_rgb_export()
+    test_export_figure_and_rebuild()
     test_row_clim_parsing()
     test_box_um_configurable()
     test_csv_generate_and_read()
