@@ -174,6 +174,12 @@ retina-fields "/full/path/to/folder-of-czi/"
 
 It walks every `.czi` in the folder (and every scene), opening a window for each.
 
+**Memory:** each file/scene is processed in its **own worker process**, so all
+memory (the big image, napari, the GPU) is fully released before the next one
+starts. A 50-file batch uses the same peak memory as a single file — a batch
+can't gradually eat all your RAM. (Add `--in-process` to force everything into
+one process; not recommended for large images.)
+
 ---
 
 ## Brightness & color
@@ -295,6 +301,12 @@ LIBGL_ALWAYS_SOFTWARE=1 retina-fields "/path/to/retina.czi"
 **It seems to freeze after I close the window** — for big whole-retina images it
 pauses 15–60 s while writing the full-resolution output. That's normal; wait for
 `wrote outputs to …`.
+
+**The whole Mac froze / had to restart during a batch** — that's memory
+exhaustion. Each file now runs in its own process (memory is released between
+files), which prevents batch build-up. If a *single* huge file still does it,
+close other apps first (especially browsers) and process fewer files/scenes at a
+time; if it persists, tell Ramiz your file's pixel dimensions and your RAM.
 
 **`.czi` won't open** — rebuild the environment to be sure the reader installed:
 `conda env update -f environment.yml --prune`.

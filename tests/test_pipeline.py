@@ -202,6 +202,72 @@ def test_pyramid_levels():
           f"top {levels[0].shape} -> {levels[-1].shape}")
 
 
+def test_batch_orchestration_per_unit():
+    """Folder batch must spawn one isolated worker subprocess per (file, scene)."""
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(list(cmd))
+        class _R:
+            returncode = 0
+        return _R()
+
+    orig = (R.subprocess.run, R.scene_count, R.gather_inputs)
+    R.subprocess.run = fake_run
+    R.scene_count = lambda p: {"a.czi": 1, "b.czi": 3}[os.path.basename(str(p))]
+    R.gather_inputs = lambda inp: [Path("/data/a.czi"), Path("/data/b.czi")]
+    try:
+        rc = R.main(["/data", "--box-um", "150", "--no-figure"])
+    finally:
+        R.subprocess.run, R.scene_count, R.gather_inputs = orig
+
+    assert rc == 0
+    workers = [c for c in calls if "--_worker" in c]
+    assert len(workers) == 4, f"expected 4 units, got {len(workers)}"
+    assert all("--scene" in c and "--box-um" in c for c in workers)
+    assert all(float(c[c.index("--box-um") + 1]) == 150.0 for c in workers)
+    assert all("--no-figure" in c for c in workers)          # passthrough works
+    b_scenes = sorted(int(c[c.index("--scene") + 1]) for c in workers
+                      if any("b.czi" in x for x in c))
+    assert b_scenes == [0, 1, 2], b_scenes
+    print("[ok] folder batch spawns one isolated worker per (file, scene) + passthrough")
+
+
+def test_csv_orchestration_skips_and_isolates():
+    rows = [
+        {k: "" for k in R.CSV_FIELDS},
+        {k: "" for k in R.CSV_FIELDS},
+    ]
+    rows[0].update(file="/d/x.czi", scene="0", base="x", colormap="green", skip="0")
+    rows[1].update(file="/d/y.czi", scene="0", base="y", colormap="green", skip="1")
+    with tempfile.TemporaryDirectory() as td:
+        cfg = os.path.join(td, "cfg.csv")
+        import csv as _c
+        with open(cfg, "w", newline="") as fh:
+            w = _c.DictWriter(fh, fieldnames=R.CSV_FIELDS)
+            w.writeheader()
+            w.writerows(rows)
+        calls = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(list(cmd))
+            class _R:
+                returncode = 0
+            return _R()
+
+        orig = R.subprocess.run
+        R.subprocess.run = fake_run
+        try:
+            rc = R.main(["--csv", cfg, "--no-figure"])
+        finally:
+            R.subprocess.run = orig
+    assert rc == 0
+    workers = [c for c in calls if "--_worker" in c]
+    assert len(workers) == 1, f"skip row not excluded: {len(workers)} workers"
+    assert "--csv" in workers[0] and "--no-figure" in workers[0]
+    print("[ok] CSV batch: skip honored, one isolated worker per runnable row")
+
+
 def test_naming_single_vs_multi():
     # single-scene -> no _s token; multi-scene -> _sN token (logic in process_scene)
     stem, n_scenes, scene = "retinaX", 1, 0
@@ -223,5 +289,7 @@ if __name__ == "__main__":
     test_box_um_configurable()
     test_csv_generate_and_read()
     test_pyramid_levels()
+    test_batch_orchestration_per_unit()
+    test_csv_orchestration_skips_and_isolates()
     test_naming_single_vs_multi()
     print("\nPIPELINE OK")

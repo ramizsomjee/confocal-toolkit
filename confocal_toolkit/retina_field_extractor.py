@@ -41,8 +41,12 @@ Run with -h for all options.
 from __future__ import annotations
 
 import argparse
+import csv as _csv
 import json
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -286,11 +290,20 @@ class FieldPicker:
 
     def run(self):
         import napari
+        import gc
         self.build_viewer()
         print("\nViewer open. Use the Rotate slider to bring dorsal UP, then drag "
               "the six boxes (D1-3 dorsal, V1-3 ventral). Close the window to export.\n")
         napari.run()
         self._capture()
+        # Release the viewer / GL / Qt resources promptly.
+        try:
+            self.viewer.close()
+        except Exception:
+            pass
+        self.viewer = None
+        self.image_layers = []
+        gc.collect()
 
     def _capture(self):
         # self.angle is kept current by _apply_rotation on every slider move;
@@ -731,6 +744,10 @@ def parse_args(argv=None):
                    help="Don't prompt to confirm/edit parsed metadata (direct runs).")
     p.add_argument("--confirm", action="store_true",
                    help="Do prompt to confirm/edit metadata even in --csv runs.")
+    p.add_argument("--in-process", action="store_true",
+                   help="Process everything in one process (default runs each "
+                        "file/scene in its own subprocess for clean memory).")
+    p.add_argument("--_worker", action="store_true", help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
 
@@ -741,17 +758,66 @@ def _outroot_for(files, args):
     return parent / f"{parent.name}_fields"
 
 
+# --------------------------------------------------------------------------- #
+# Subprocess orchestration
+#
+# Each file+scene is processed in its own worker process. When the worker exits,
+# the OS reclaims ALL of its memory (bioio load buffers, the full-resolution
+# array, and any napari/Qt/GPU memory that isn't freed cleanly in-process). So a
+# 50-file batch has the same peak memory as running one file — "batch == a
+# sequence of individual runs". The parent stays tiny (never imports napari or
+# loads pixels; it only reads scene counts to enumerate the work).
+# --------------------------------------------------------------------------- #
+def _passthrough_flags(args):
+    """Settings a worker needs (everything except the unit selector)."""
+    f = ["--box-um", str(args.box_um), "--downsample", str(args.downsample),
+         "--pmin", str(args.pmin), "--pmax", str(args.pmax),
+         "--gamma", str(args.gamma)]
+    if args.outdir:
+        f += ["--outdir", str(args.outdir)]
+    if args.fullres_rgb:
+        f.append("--fullres-rgb")
+    if args.clim:
+        f += ["--clim"] + [f"{lo},{hi}" for lo, hi in args.clim]
+    if args.colormaps:
+        f += ["--colormaps"] + list(args.colormaps)
+    if args.um_per_px:
+        f += ["--um-per-px", str(args.um_per_px)]
+    if args.age:
+        f += ["--age", str(args.age)]
+    if args.no_figure:
+        f.append("--no-figure")
+    if args.no_confirm:
+        f.append("--no-confirm")
+    if args.confirm:
+        f.append("--confirm")
+    return f
+
+
+def _run_worker(tail, label):
+    cmd = [sys.executable, "-m", "confocal_toolkit.retina_field_extractor",
+           "--_worker", *tail]
+    rc = subprocess.run(cmd).returncode          # inherits stdio -> GUI + prompts work
+    if rc != 0:
+        print(f"  ! worker exited with code {rc} for {label}", file=sys.stderr)
+    return rc
+
+
+def _not_skipped(row):
+    return str(row.get("skip", "0")).strip().lower() not in ("1", "true", "yes")
+
+
 def main(argv=None):
     args = parse_args(argv)
     args.clim = parse_clim(args.clim)
+    in_process = args._worker or args.in_process
 
-    # Mode 0: build figures from a premade folder of exported panels and exit.
+    # Build figures from a premade folder of exported panels and exit.
     if args.build_figure:
-        build_figures_from_dir(args.build_figure,
-                               interactive=not args.no_confirm)
+        build_figures_from_dir(args.build_figure, interactive=not args.no_confirm)
         return 0
 
-    # Mode 1: generate a batch-config CSV from a folder and exit.
+    # Generate a batch-config CSV from a folder and exit.
     if args.make_csv:
         if not args.input:
             print("error: --make-csv needs an input file/folder.", file=sys.stderr)
@@ -763,23 +829,41 @@ def main(argv=None):
         write_config_csv(files, args.make_csv, box_um=args.box_um)
         return 0
 
-    # Mode 2: run from a batch-config CSV (per-row color/brightness).
+    # Run from a batch-config CSV (per-row color/brightness/metadata).
     if args.csv:
-        rows = read_config_csv(args.csv)
+        rows = [r for r in read_config_csv(args.csv) if _not_skipped(r)]
         if not rows:
-            print(f"error: no rows in {args.csv}", file=sys.stderr)
+            print(f"error: no runnable rows in {args.csv}", file=sys.stderr)
             return 2
         outroot = _outroot_for([r["file"] for r in rows], args)
-        for row in rows:
-            if str(row.get("skip", "0")).strip().lower() in ("1", "true", "yes"):
-                print(f"skip (csv): {row.get('base')}")
-                continue
-            process_scene(row["file"], int(row["scene"]), args, outroot,
-                          base_override=(row.get("base") or None), csv_row=row)
+        if in_process:
+            for row in rows:
+                process_scene(row["file"], int(row["scene"]), args, outroot,
+                              base_override=(row.get("base") or None), csv_row=row)
+            print("\nAll done.")
+            return 0
+        print(f"Batch: {len(rows)} row(s); each runs in its own process so memory "
+              "is released between them.")
+        for i, row in enumerate(rows, 1):
+            print(f"\n[{i}/{len(rows)}] {row.get('base') or Path(row['file']).stem}")
+            tmp = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False,
+                                              newline="")
+            with tmp:
+                w = _csv.DictWriter(tmp, fieldnames=CSV_FIELDS)
+                w.writeheader()
+                w.writerow({k: row.get(k, "") for k in CSV_FIELDS})
+            try:
+                _run_worker(["--csv", tmp.name] + _passthrough_flags(args),
+                            row.get("base", ""))
+            finally:
+                try:
+                    os.remove(tmp.name)
+                except OSError:
+                    pass
         print("\nAll done.")
         return 0
 
-    # Mode 3: direct file/folder run.
+    # Direct file/folder run.
     if not args.input:
         print("error: provide an input file/folder, --csv, or --make-csv.",
               file=sys.stderr)
@@ -789,6 +873,8 @@ def main(argv=None):
         print(f"error: no .czi found at {args.input}", file=sys.stderr)
         return 2
     outroot = _outroot_for(files, args)
+
+    units = []
     for f in files:
         try:
             n = scene_count(str(f))
@@ -796,8 +882,23 @@ def main(argv=None):
             print(f"error reading {f}: {e}", file=sys.stderr)
             continue
         scenes = [args.scene] if args.scene is not None else range(n)
-        for s in scenes:
-            process_scene(str(f), s, args, outroot)
+        units += [(str(f), s) for s in scenes]
+    if not units:
+        return 2
+
+    if in_process:
+        for f, s in units:
+            process_scene(f, s, args, outroot)
+        print("\nAll done.")
+        return 0
+
+    if len(units) > 1:
+        print(f"Batch: {len(units)} unit(s); each runs in its own process so "
+              "memory is fully released between them.")
+    for i, (f, s) in enumerate(units, 1):
+        print(f"\n[{i}/{len(units)}] {Path(f).name}  scene {s}")
+        _run_worker([f, "--scene", str(s)] + _passthrough_flags(args),
+                    f"{Path(f).name} s{s}")
     print("\nAll done.")
     return 0
 
