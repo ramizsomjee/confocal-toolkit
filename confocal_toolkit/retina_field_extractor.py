@@ -642,10 +642,18 @@ def scene_channel_info(path):
     return out, len(scenes)
 
 
-def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
+def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM,
+                     stain_clim=None, stain_color=None):
     """Generate a per-(file, scene) template CSV: one row per extracted scene,
-    with a guessed colormap, blank contrast (blank = auto), and parsed metadata."""
+    with a guessed colormap, parsed metadata, and (optionally) per-stain contrast
+    and color pre-filled so every S-opsin / M-opsin image is coordinated.
+
+    stain_clim / stain_color: dicts keyed by stain initial ('s' / 'm'), e.g.
+    {'s': (150, 4000), 'm': (120, 3500)} and {'s': 'magenta', 'm': 'green'}.
+    """
     import csv
+    stain_clim = stain_clim or {}
+    stain_color = stain_color or {}
     rows = []
     for f in files:
         try:
@@ -655,13 +663,19 @@ def write_config_csv(files, out_csv, box_um=DEFAULT_BOX_UM):
             continue
         stem = Path(f).stem
         meta = MD.parse_metadata(stem)   # prefill metadata columns
+        sk = (meta.get("stain") or "").lower()[:1]      # 's' or 'm'
         for i, sc, names in info:
             base = f"{stem}_s{i}" if n > 1 else stem
-            cmaps = guess_colormaps_for_file(stem, names)
+            if sk in stain_color:
+                cmaps = [stain_color[sk]] * max(1, len(names))
+            else:
+                cmaps = guess_colormaps_for_file(stem, names)
+            cl = stain_clim.get(sk)
+            lo, hi = (str(cl[0]), str(cl[1])) if cl else ("", "")
             rows.append({
                 "file": str(f), "scene": i, "n_scenes": n, "base": base,
                 "channels": ";".join(names), "colormap": ";".join(cmaps),
-                "clim_lo": "", "clim_hi": "", "gamma": 1.0, "box_um": box_um,
+                "clim_lo": lo, "clim_hi": hi, "gamma": 1.0, "box_um": box_um,
                 "rotate": 0, "skip": 0,
                 "model": meta.get("model", ""), "samd7": meta.get("samd7", ""),
                 "eye": meta.get("eye", ""), "stain": meta.get("stain", ""),
@@ -707,6 +721,15 @@ def parse_args(argv=None):
     p.add_argument("--make-csv", metavar="PATH", default=None,
                    help="Scan the input folder and write a batch-config CSV "
                         "(one row per file+scene), then exit.")
+    p.add_argument("--clim-s", default=None, metavar="LO,HI",
+                   help="With --make-csv: pre-fill contrast for every S-opsin row "
+                        "(coordinates brightness across all S images).")
+    p.add_argument("--clim-m", default=None, metavar="LO,HI",
+                   help="With --make-csv: pre-fill contrast for every M-opsin row.")
+    p.add_argument("--color-s", default=None,
+                   help="With --make-csv: colormap for S-opsin rows (default magenta).")
+    p.add_argument("--color-m", default=None,
+                   help="With --make-csv: colormap for M-opsin rows (default green).")
     p.add_argument("--csv", metavar="PATH", default=None,
                    help="Run using a batch-config CSV (per-file color/brightness).")
     p.add_argument("--outdir", default=None, help="Output root (default <input>_fields).")
@@ -826,7 +849,18 @@ def main(argv=None):
         if not files:
             print(f"error: no .czi found at {args.input}", file=sys.stderr)
             return 2
-        write_config_csv(files, args.make_csv, box_um=args.box_um)
+        stain_clim = {}
+        if args.clim_s:
+            stain_clim["s"] = tuple(float(x) for x in args.clim_s.split(","))
+        if args.clim_m:
+            stain_clim["m"] = tuple(float(x) for x in args.clim_m.split(","))
+        stain_color = {}
+        if args.color_s:
+            stain_color["s"] = args.color_s
+        if args.color_m:
+            stain_color["m"] = args.color_m
+        write_config_csv(files, args.make_csv, box_um=args.box_um,
+                         stain_clim=stain_clim, stain_color=stain_color)
         return 0
 
     # Run from a batch-config CSV (per-row color/brightness/metadata).

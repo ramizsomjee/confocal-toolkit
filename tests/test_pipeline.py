@@ -157,7 +157,9 @@ def test_csv_generate_and_read():
     files = R.gather_inputs(folder)
     with tempfile.TemporaryDirectory() as td:
         csv_path = os.path.join(td, "config.csv")
-        R.write_config_csv(files, csv_path, box_um=150.0)
+        R.write_config_csv(files, csv_path, box_um=150.0,
+                           stain_clim={"s": (150, 4000), "m": (120, 3500)},
+                           stain_color={"s": "blue"})
         rows = R.read_config_csv(csv_path)
         assert rows, "no rows written"
         assert set(R.CSV_FIELDS).issubset(rows[0].keys())
@@ -176,8 +178,16 @@ def test_csv_generate_and_read():
             assert col in rows[0], col
         assert any(r["stain"] for r in rows), "no stain parsed into CSV"
         assert all((r["eye"] in ("left", "right", "")) for r in rows)
-        print(f"[ok] CSV generate/read: {len(rows)} rows from {len(files)} files, "
-              f"{len(multi)} multi-scene expanded, metadata columns filled")
+        # per-stain coordination: every S row got the S limits+color, M rows the M limits
+        s_rows = [r for r in rows if r["stain"] == "S-opsin"]
+        m_rows = [r for r in rows if r["stain"] == "M-opsin"]
+        assert s_rows and m_rows, "need both stains present to test coordination"
+        assert all(float(r["clim_lo"]) == 150 and float(r["clim_hi"]) == 4000
+                   and r["colormap"] == "blue" for r in s_rows)
+        assert all(float(r["clim_lo"]) == 120 and float(r["clim_hi"]) == 3500
+                   for r in m_rows)
+        print(f"[ok] CSV generate/read: {len(rows)} rows, metadata filled, "
+              f"per-stain clim/color coordinated ({len(s_rows)} S, {len(m_rows)} M)")
 
 
 def test_box_um_configurable():

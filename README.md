@@ -220,7 +220,20 @@ or brightness, use a config CSV — one row per file (and per scene).
 ```bash
 retina-fields "/path/to/folder/" --make-csv batch_config.csv
 ```
-This makes a spreadsheet you can open in Excel/Numbers. Columns:
+The generator reads each file name and **already fills `colormap` by stain**
+(S-opsin/S-647 → magenta, M-opsin/M-647 → green) plus the metadata columns. To
+also **coordinate brightness by stain in one shot** — so every S image shares one
+histogram and every M image another — pass per-stain limits (raw intensity units):
+```bash
+retina-fields "/path/to/folder/" --make-csv batch_config.csv \
+    --clim-s 150,4000 --clim-m 120,3500      # optional: --color-s blue --color-m green
+```
+Now every S-opsin row is pre-filled with `150 / 4000` and magenta (or your
+`--color-s`), every M-opsin row with `120 / 3500` and green — consistent across
+the whole folder. Reuse the same numbers on another folder to coordinate across
+batches. You can still tweak any individual row.
+
+Open the CSV in Excel/Numbers. Columns:
 
 | column | meaning |
 |--------|---------|
@@ -236,6 +249,10 @@ This makes a spreadsheet you can open in Excel/Numbers. Columns:
 | `skip` | put `1` to skip that row |
 
 **2. Edit** `colormap`, `clim_lo`, `clim_hi`, `gamma` as needed, then **save**.
+Tip: to coordinate by stain by hand instead of the flags above, sort the sheet
+by the `stain` column and fill the same `clim_lo`/`clim_hi` down each group.
+(Don't know the right numbers yet? Run one image, read the applied limits from
+its `_params.json`, then paste those into all same-stain rows.)
 
 **3. Run from it:**
 ```bash
